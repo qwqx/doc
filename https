@@ -1,0 +1,98 @@
+java 程序访问https 链接报错
+1.允许/忽略所有证书校验
+
+@Slf4j
+@Configuration
+public class RestTemplateConfig {
+
+    //@Bean
+    public HttpComponentsClientHttpRequestFactory requestFactory(boolean ignoreHttps) {
+        final PoolingHttpClientConnectionManager connectionManager = getConnectionManager(ignoreHttps);
+
+
+        // 本地要配置代理， 187服务器不需要
+        HttpHost proxy = new HttpHost("xxx", 8080);
+        CredentialsProvider credsProvider = new BasicCredentialsProvider();
+        credsProvider.setCredentials(
+                new AuthScope("xxx", 8080),
+                new UsernamePasswordCredentials("username", "password")
+        );
+
+        CloseableHttpClient httpClient = HttpClients.custom()
+                .setConnectionManager(connectionManager)
+                .evictIdleConnections(30, TimeUnit.SECONDS)
+                .setRoutePlanner(new DefaultProxyRoutePlanner(proxy) {
+                    @Override
+                    public HttpHost determineProxy(HttpHost target, HttpRequest request, HttpContext context) throws HttpException {
+                        return super.determineProxy(target, request, context);
+                    }
+                })
+                //.setSSLContext(getSSLContext())
+                //.setSSLSocketFactory(getSSLConnectionSocketFactory())
+                .setDefaultCredentialsProvider(credsProvider)
+                .disableAutomaticRetries()
+                // 有 Keep-Alive 认里面的值，没有的话永久有效
+                //.setKeepAliveStrategy(DefaultConnectionKeepAliveStrategy.INSTANCE)
+                // 换成自定义的
+                .build();
+
+        HttpComponentsClientHttpRequestFactory requestFactory =
+                new HttpComponentsClientHttpRequestFactory(httpClient);
+
+        return requestFactory;
+    }
+
+    PoolingHttpClientConnectionManager getConnectionManager(boolean ignoreHttps) {
+        final SSLConnectionSocketFactory sslConnectionSocketFactory = getSSLConnectionSocketFactory();
+        PoolingHttpClientConnectionManager connectionManager = null;
+        Registry<ConnectionSocketFactory> registry = null;
+        if (ignoreHttps) {
+            registry = RegistryBuilder.<ConnectionSocketFactory>create()
+                    .register("http", new PlainConnectionSocketFactory())
+                    .register("https", sslConnectionSocketFactory)
+                    .build();
+            connectionManager = new PoolingHttpClientConnectionManager(registry);
+        } else {
+            connectionManager = new PoolingHttpClientConnectionManager();
+        }
+
+        //new PoolingHttpClientConnectionManager(30, TimeUnit.SECONDS);
+        connectionManager.setMaxTotal(200);
+        connectionManager.setDefaultMaxPerRoute(20);
+        return connectionManager;
+    }
+
+    SSLConnectionSocketFactory getSSLConnectionSocketFactory() {
+        try {
+            SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, (chain, authType) -> true).build();
+            SSLConnectionSocketFactory sslConnectionSocketFactory = new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE);
+            return sslConnectionSocketFactory;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+
+    }
+
+
+    @Bean
+    public RestTemplate restTemplate(RestTemplateBuilder builder) {
+        return builder
+                .setConnectTimeout(Duration.ofMillis(10000))
+                .setReadTimeout(Duration.ofMillis(50000))
+                .requestFactory(() ->this.requestFactory(false))
+                .build();
+    }
+
+    @Bean
+    public OkHttp3ClientHttpRequestFactory requestOkFactory() {
+
+        return new OkHttp3ClientHttpRequestFactory();
+    }
+}
+
+2.下载证书并导入到java默认证书库中，注意一定要导入根证书！！
+3.把Https证书加入到环境变量
+
+4.构建 HttpClient 时，加载信任证书 
+https://juejin.cn/post/6844903683113631751?searchId=20240906163304980B52DCE67A04906A7A
