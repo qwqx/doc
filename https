@@ -1,21 +1,40 @@
-java 程序访问https 链接报错
+java 程序访问https 链接报错，有以下几种方案，
 1.允许/忽略所有证书校验
+2.下载证书并导入到java默认证书库中，注意一定要导入根证书！！
+3.把Https证书加入到环境变量
+4.构建 HttpClient 时，加载信任证书 
+https://juejin.cn/post/6844903683113631751?searchId=20240906163304980B52DCE67A04906A7A
 
 @Slf4j
 @Configuration
 public class RestTemplateConfig {
 
+    /**
+     * true  -jdkDefault  pass
+     * true  -my          pass
+     * true  -ignoreAll   pass
+     * false -jdkDefault  fail
+     * false -my          fail
+     * false -ignoreAll   fail
+     */
+
+    //jdkDefault/my/ignoreAll
+    private final static String KEY_STORE_TYPE = "jdkDefault";
+    //private final static String KEY_STORE_TYPE = "my";
+    //private final static String KEY_STORE_TYPE = "ignoreAll";
+    private final static boolean IGNORE_HTTPS = true;
+
     //@Bean
-    public HttpComponentsClientHttpRequestFactory requestFactory(boolean ignoreHttps) {
-        final PoolingHttpClientConnectionManager connectionManager = getConnectionManager(ignoreHttps);
+    public HttpComponentsClientHttpRequestFactory requestFactory() {
+        final PoolingHttpClientConnectionManager connectionManager = getConnectionManager();
 
 
         // 本地要配置代理， 187服务器不需要
-        HttpHost proxy = new HttpHost("xxx", 8080);
+        HttpHost proxy = new HttpHost("xxx.com", 8080);
         CredentialsProvider credsProvider = new BasicCredentialsProvider();
         credsProvider.setCredentials(
-                new AuthScope("xxx", 8080),
-                new UsernamePasswordCredentials("username", "password")
+                new AuthScope("xxx.com", 8080),
+                new UsernamePasswordCredentials("xxx", "xxx")
         );
 
         CloseableHttpClient httpClient = HttpClients.custom()
@@ -42,11 +61,11 @@ public class RestTemplateConfig {
         return requestFactory;
     }
 
-    PoolingHttpClientConnectionManager getConnectionManager(boolean ignoreHttps) {
+    PoolingHttpClientConnectionManager getConnectionManager() {
         final SSLConnectionSocketFactory sslConnectionSocketFactory = getSSLConnectionSocketFactory();
         PoolingHttpClientConnectionManager connectionManager = null;
         Registry<ConnectionSocketFactory> registry = null;
-        if (ignoreHttps) {
+        if (IGNORE_HTTPS) {
             registry = RegistryBuilder.<ConnectionSocketFactory>create()
                     .register("http", new PlainConnectionSocketFactory())
                     .register("https", sslConnectionSocketFactory)
@@ -63,6 +82,46 @@ public class RestTemplateConfig {
     }
 
     SSLConnectionSocketFactory getSSLConnectionSocketFactory() {
+        if(StringUtils.equals("jdkDefault", KEY_STORE_TYPE)) {
+            return getSSLConnectionSocketFactoryByJdkDefault();
+        }else if(StringUtils.equals("my", KEY_STORE_TYPE)) {
+            return getSSLConnectionSocketFactoryByMyStore();
+        }else if(StringUtils.equals("ignoreAll", KEY_STORE_TYPE)) {
+            return getSSLConnectionSocketFactoryByIgnoreAll();
+        }
+        return  null;
+    }
+
+
+    // load cert into java cacerts, trust java keystore
+    SSLConnectionSocketFactory getSSLConnectionSocketFactoryByJdkDefault() {
+        try {
+            SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, (chain, authType) -> false).build();
+            SSLConnectionSocketFactory sslConnectionSocketFactory = new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE);
+            return sslConnectionSocketFactory;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+
+    }
+
+    // load my keystore
+    SSLConnectionSocketFactory getSSLConnectionSocketFactoryByMyStore() {
+        try {
+            final KeyStore keyStore = KeyStore.getInstance(new File("D:\\openjdk-11_windows-x64_bin\\jdk-11\\lib\\security\\thirtyCert\\http.jks"), "changeit".toCharArray());
+            SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(keyStore, null).build();
+            SSLConnectionSocketFactory sslConnectionSocketFactory = new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE);
+            return sslConnectionSocketFactory;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+
+    }
+
+    // ignore all certs
+    SSLConnectionSocketFactory getSSLConnectionSocketFactoryByIgnoreAll() {
         try {
             SSLContext sslContext = new SSLContextBuilder().loadTrustMaterial(null, (chain, authType) -> true).build();
             SSLConnectionSocketFactory sslConnectionSocketFactory = new SSLConnectionSocketFactory(sslContext, NoopHostnameVerifier.INSTANCE);
@@ -80,7 +139,7 @@ public class RestTemplateConfig {
         return builder
                 .setConnectTimeout(Duration.ofMillis(10000))
                 .setReadTimeout(Duration.ofMillis(50000))
-                .requestFactory(() ->this.requestFactory(false))
+                .requestFactory(this::requestFactory)
                 .build();
     }
 
@@ -91,8 +150,3 @@ public class RestTemplateConfig {
     }
 }
 
-2.下载证书并导入到java默认证书库中，注意一定要导入根证书！！
-3.把Https证书加入到环境变量
-
-4.构建 HttpClient 时，加载信任证书 
-https://juejin.cn/post/6844903683113631751?searchId=20240906163304980B52DCE67A04906A7A
